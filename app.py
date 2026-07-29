@@ -11,7 +11,7 @@ import yfinance as yf
 # 🔄 0. 自動定時刷新 (盤中 30 秒自動更新)
 # ----------------------------------------------------
 st.set_page_config(
-    page_title="台指期日盤 5分K 關卡分析", page_icon="📊", layout="wide"
+    page_title="台指期 5分K 多空關卡分析", page_icon="📊", layout="wide"
 )
 
 components.html(
@@ -31,8 +31,8 @@ st.markdown(
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     </head>
     <style>
-    .stNumberInput label, .stSlider label { font-size: 18px !important; font-weight: bold !important; color: #FFFFFF !important; }
-    .stNumberInput input { font-size: 18px !important; font-weight: bold !important; }
+    .stNumberInput label, .stSelectbox label, .stSlider label { font-size: 18px !important; font-weight: bold !important; color: #FFFFFF !important; }
+    .stNumberInput input, .stSelectbox div { font-size: 18px !important; font-weight: bold !important; }
     h1 { font-size: 26px !important; color: #FFFFFF !important; }
     .js-plotly-plot .plotly .main-svg { touch-action: auto !important; }
     </style>
@@ -41,7 +41,7 @@ st.markdown(
 )
 
 # ----------------------------------------------------
-# 🔐 1. 密碼驗證
+# 🔐 1. 密碼驗證 (30天記憶)
 # ----------------------------------------------------
 current_time = datetime.now()
 year_month_key = current_time.strftime("%Y_%m")
@@ -92,18 +92,18 @@ def check_password():
 
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：加入圖表長寬高調整介面
+# 🚀 2. 主程式：新增「日盤 / 全日盤」自由切換
 # ----------------------------------------------------
 if check_password():
-  st.title("📊 台灣台指期 【08:45~13:45 日盤 5分K】 關卡圖")
+  st.title("📊 台灣台指期 5分K 多空關卡分析圖")
 
   @st.cache_data(ttl=15)
-  def load_5m_day_session_data():
-    ticker = "^TWII"
+  def load_5m_futures_data():
+    ticker = "WTX=F"  # 台指期近月期貨
     try:
       df = yf.download(ticker, period="5d", interval="5m")
       if df.empty:
-        ticker = "WTX=F"
+        ticker = "^TWII"
         df = yf.download(ticker, period="5d", interval="5m")
 
       if df.empty:
@@ -138,38 +138,29 @@ if check_password():
 
       res_df["time_str"] = res_df.index.strftime("%H:%M")
 
-      day_session_df = res_df[
-          (res_df["time_str"] >= "08:45") & (res_df["time_str"] <= "13:45")
-      ].copy()
+      # 若成交量數據不完整，進行擬真還原
+      if res_df["Volume"].sum() < 100:
+        range_p = (res_df["High"] - res_df["Low"]).abs()
+        res_df["Volume"] = (
+            1200 + range_p * 180 + np.random.randint(50, 300, size=len(res_df))
+        )
 
-      if not day_session_df.empty:
-        latest_date = day_session_df.index.date[-1]
-        target_df = day_session_df[
-            day_session_df.index.date == latest_date
-        ].copy()
-
-        if target_df["Volume"].sum() < 100:
-          range_p = (target_df["High"] - target_df["Low"]).abs()
-          target_df["Volume"] = (
-              1200 + range_p * 180 + np.random.randint(50, 300, size=len(target_df))
-          )
-
-        return target_df
+      return res_df
 
     except Exception:
       pass
     return pd.DataFrame()
 
-  plot_df = load_5m_day_session_data()
+  raw_df = load_5m_futures_data()
 
-  if plot_df.empty:
+  if raw_df.empty:
     st.warning("❌ 暫無 5分K 資料或非交易時段，請稍後重試。")
   else:
-    default_n = float(plot_df["Close"].iloc[-1])
+    # 控制選單：關卡點位 + 盤別選擇 + 圖表高度
+    col1, col2, col3 = st.columns([2, 2, 2])
 
-    # 🎛️ 第一排選單：關卡 N 點位 + 圖表高度拉桿 (長寬比)
-    col1, col2 = st.columns([2, 3])
     with col1:
+      default_n = float(raw_df["Close"].iloc[-1])
       n_input = st.number_input(
           "【輸入關卡基準點 N】",
           value=int(default_n),
@@ -177,13 +168,37 @@ if check_password():
       )
 
     with col2:
+      session_type = st.selectbox(
+          "【交易時段切換】",
+          options=["僅日盤 (08:45~13:45)", "全日盤 (含夜盤 15:00~次日13:45)"],
+          index=0,
+      )
+
+    with col3:
       chart_height = st.slider(
-          "【調整圖表顯示高度/長寬比】",
+          "【圖表高度】",
           min_value=400,
           max_value=1200,
           value=650,
           step=50,
       )
+
+    # ✨ 根據選擇過濾數據
+    if "僅日盤" in session_type:
+      # 只保留日盤 08:45 ~ 13:45
+      day_df = raw_df[
+          (raw_df["time_str"] >= "08:45") & (raw_df["time_str"] <= "13:45")
+      ].copy()
+      if not day_df.empty:
+        latest_date = day_df.index.date[-1]
+        plot_df = day_df[day_df.index.date == latest_date].copy()
+      else:
+        plot_df = raw_df.copy()
+      title_suffix = "【日盤 08:45~13:45】"
+    else:
+      # 取近 280 根 K 棒 (涵蓋完整的夜盤 + 當日日盤)
+      plot_df = raw_df.tail(280).copy()
+      title_suffix = "【全日盤 (夜盤 + 日盤)】"
 
     N = float(n_input)
     P1 = N + 300
@@ -207,7 +222,7 @@ if check_password():
     # 🟢🔴 1. 5分K 線圖
     fig.add_trace(
         io_plotly.Candlestick(
-            x=plot_df.index.strftime("%H:%M"),
+            x=plot_df.index.strftime("%m/%d %H:%M"),
             open=plot_df["Open"],
             high=plot_df["High"],
             low=plot_df["Low"],
@@ -225,7 +240,7 @@ if check_password():
     # 📊 2. 成交量圖
     fig.add_trace(
         io_plotly.Bar(
-            x=plot_df.index.strftime("%H:%M"),
+            x=plot_df.index.strftime("%m/%d %H:%M"),
             y=plot_df["Volume"],
             name="成交量",
             marker_color=plot_df["VolColor"],
@@ -243,7 +258,7 @@ if check_password():
         (S2, f"支撐二 {S2:,.0f}", "#FFFF00"),
     ]
 
-    x_last = plot_df.index.strftime("%H:%M")[-1]
+    x_last = plot_df.index.strftime("%m/%d %H:%M")[-1]
 
     for val, label_text, color in lines_config:
       fig.add_hline(
@@ -263,17 +278,15 @@ if check_password():
           col=1,
       )
 
-    trade_date_str = plot_df.index[0].strftime("%Y/%m/%d")
+    trade_date_str = plot_df.index[-1].strftime("%Y/%m/%d")
 
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="#000000",
         plot_bgcolor="#000000",
-        height=chart_height,  # ✨ 使用者可自訂動態高度
+        height=chart_height,
         title={
-            "text": (
-                f"<b>台指期【{trade_date_str} 日盤 08:45~13:45】 5分K關卡圖</b>"
-            ),
+            "text": f"<b>台指期{title_suffix} 5分K關卡圖 ({trade_date_str})</b>",
             "x": 0.5,
             "xanchor": "center",
             "font": {"size": 20, "color": "#FFFFFF"},
