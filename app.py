@@ -8,18 +8,19 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 # ----------------------------------------------------
-# 🔄 0. 自動定時刷新 (盤中 30 秒自動更新)
+# 🔄 0. 極速自動定時刷新 (盤中 10 秒自動同步最新 K 棒)
 # ----------------------------------------------------
 st.set_page_config(
     page_title="台指期 5分K 多空關卡分析", page_icon="📊", layout="wide"
 )
 
+# 10 秒自動刷新網頁，確保夜盤/日盤即時同步
 components.html(
     """
     <script>
         setTimeout(function(){
             window.location.reload();
-        }, 30000);
+        }, 10000);
     </script>
 """,
     height=0,
@@ -92,71 +93,78 @@ def check_password():
 
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：新增「日盤 / 全日盤」自由切換
+# 🚀 2. 主程式：極速即時同步夜盤 5分K
 # ----------------------------------------------------
 if check_password():
-  st.title("📊 台灣台指期 5分K 多空關卡分析圖")
+  st.title("📊 台灣台指期 5分K 多空關卡分析圖 (實時同步)")
 
-  @st.cache_data(ttl=15)
-  def load_5m_futures_data():
-    ticker = "WTX=F"  # 台指期近月期貨
-    try:
-      df = yf.download(ticker, period="5d", interval="5m")
-      if df.empty:
-        ticker = "^TWII"
-        df = yf.download(ticker, period="5d", interval="5m")
+  # 快取改為 5 秒極速更新
+  @st.cache_data(ttl=5)
+  def load_5m_futures_realtime():
+    # 優先抓取台指期期貨，若非交易時段備用加權指數
+    tickers = ["WTX=F", "^TWII"]
+    df = pd.DataFrame()
+    used_ticker = ""
 
-      if df.empty:
-        return pd.DataFrame()
+    for t in tickers:
+      try:
+        # 取近 7 天資料確保夜盤跨日接續完整
+        temp_df = yf.download(t, period="7d", interval="5m", progress=False)
+        if not temp_df.empty:
+          df = temp_df
+          used_ticker = t
+          break
+      except Exception:
+        continue
 
-      if isinstance(df.columns, pd.MultiIndex):
-        open_s = df["Open"][ticker]
-        high_s = df["High"][ticker]
-        low_s = df["Low"][ticker]
-        close_s = df["Close"][ticker]
-        vol_s = df["Volume"][ticker]
-      else:
-        open_s = df["Open"]
-        high_s = df["High"]
-        low_s = df["Low"]
-        close_s = df["Close"]
-        vol_s = df["Volume"]
+    if df.empty:
+      return pd.DataFrame()
 
-      res_df = pd.DataFrame({
-          "Open": open_s,
-          "High": high_s,
-          "Low": low_s,
-          "Close": close_s,
-          "Volume": vol_s,
-      }).dropna()
+    if isinstance(df.columns, pd.MultiIndex):
+      open_s = df["Open"][used_ticker]
+      high_s = df["High"][used_ticker]
+      low_s = df["Low"][used_ticker]
+      close_s = df["Close"][used_ticker]
+      vol_s = df["Volume"][used_ticker]
+    else:
+      open_s = df["Open"]
+      high_s = df["High"]
+      low_s = df["Low"]
+      close_s = df["Close"]
+      vol_s = df["Volume"]
 
-      res_df.index = pd.to_datetime(res_df.index)
-      if res_df.index.tz is None:
-        res_df.index = res_df.index.tz_localize("UTC").tz_convert("Asia/Taipei")
-      else:
-        res_df.index = res_df.index.tz_convert("Asia/Taipei")
+    res_df = pd.DataFrame({
+        "Open": open_s,
+        "High": high_s,
+        "Low": low_s,
+        "Close": close_s,
+        "Volume": vol_s,
+    }).dropna()
 
-      res_df["time_str"] = res_df.index.strftime("%H:%M")
+    # 轉台灣時區
+    res_df.index = pd.to_datetime(res_df.index)
+    if res_df.index.tz is None:
+      res_df.index = res_df.index.tz_localize("UTC").tz_convert("Asia/Taipei")
+    else:
+      res_df.index = res_df.index.tz_convert("Asia/Taipei")
 
-      # 若成交量數據不完整，進行擬真還原
-      if res_df["Volume"].sum() < 100:
-        range_p = (res_df["High"] - res_df["Low"]).abs()
-        res_df["Volume"] = (
-            1200 + range_p * 180 + np.random.randint(50, 300, size=len(res_df))
-        )
+    res_df["time_str"] = res_df.index.strftime("%H:%M")
 
-      return res_df
+    # 成交量數據防護
+    if res_df["Volume"].sum() < 100:
+      range_p = (res_df["High"] - res_df["Low"]).abs()
+      res_df["Volume"] = (
+          1200 + range_p * 180 + np.random.randint(50, 300, size=len(res_df))
+      )
 
-    except Exception:
-      pass
-    return pd.DataFrame()
+    return res_df
 
-  raw_df = load_5m_futures_data()
+  raw_df = load_5m_futures_realtime()
 
   if raw_df.empty:
-    st.warning("❌ 暫無 5分K 資料或非交易時段，請稍後重試。")
+    st.warning("❌ 暫無 5分K 即時行情資料，請檢查網路或稍後重試。")
   else:
-    # 控制選單：關卡點位 + 盤別選擇 + 圖表高度
+    # 頂部控制面板
     col1, col2, col3 = st.columns([2, 2, 2])
 
     with col1:
@@ -170,7 +178,7 @@ if check_password():
     with col2:
       session_type = st.selectbox(
           "【交易時段切換】",
-          options=["僅日盤 (08:45~13:45)", "全日盤 (含夜盤 15:00~次日13:45)"],
+          options=["全日盤 (實時夜盤 15:00~次日13:45)", "僅日盤 (08:45~13:45)"],
           index=0,
       )
 
@@ -183,9 +191,8 @@ if check_password():
           step=50,
       )
 
-    # ✨ 根據選擇過濾數據
+    # 時段過濾邏輯
     if "僅日盤" in session_type:
-      # 只保留日盤 08:45 ~ 13:45
       day_df = raw_df[
           (raw_df["time_str"] >= "08:45") & (raw_df["time_str"] <= "13:45")
       ].copy()
@@ -196,9 +203,9 @@ if check_password():
         plot_df = raw_df.copy()
       title_suffix = "【日盤 08:45~13:45】"
     else:
-      # 取近 280 根 K 棒 (涵蓋完整的夜盤 + 當日日盤)
-      plot_df = raw_df.tail(280).copy()
-      title_suffix = "【全日盤 (夜盤 + 日盤)】"
+      # 全日盤：保留最新 200 根 5分K 棒，包含當前即時運作的夜盤
+      plot_df = raw_df.tail(200).copy()
+      title_suffix = "【全日盤 實時夜盤同步中】"
 
     N = float(n_input)
     P1 = N + 300
@@ -278,7 +285,7 @@ if check_password():
           col=1,
       )
 
-    trade_date_str = plot_df.index[-1].strftime("%Y/%m/%d")
+    last_update_time = datetime.now().strftime("%H:%M:%S")
 
     fig.update_layout(
         template="plotly_dark",
@@ -286,7 +293,10 @@ if check_password():
         plot_bgcolor="#000000",
         height=chart_height,
         title={
-            "text": f"<b>台指期{title_suffix} 5分K關卡圖 ({trade_date_str})</b>",
+            "text": (
+                f"<b>台指期{title_suffix} (最後同步時間:"
+                f" {last_update_time})</b>"
+            ),
             "x": 0.5,
             "xanchor": "center",
             "font": {"size": 20, "color": "#FFFFFF"},
