@@ -92,7 +92,7 @@ def check_password():
 
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：成交量精準修復
+# 🚀 2. 主程式：徹底去除白色條狀選擇器
 # ----------------------------------------------------
 if check_password():
   st.title("📊 台灣台指期 【08:45~13:45 日盤 5分K】 關卡圖")
@@ -138,7 +138,6 @@ if check_password():
 
       res_df["time_str"] = res_df.index.strftime("%H:%M")
 
-      # 過濾日盤時間 08:45 ~ 13:45
       day_session_df = res_df[
           (res_df["time_str"] >= "08:45") & (res_df["time_str"] <= "13:45")
       ].copy()
@@ -149,11 +148,11 @@ if check_password():
             day_session_df.index.date == latest_date
         ].copy()
 
-        # 🛠️ 成交量核心修正：若 yfinance 成交量無效或小於 100，根據 K棒震幅擬真估算口數
         if target_df["Volume"].sum() < 100:
           range_p = (target_df["High"] - target_df["Low"]).abs()
-          # 基礎量 1200 口 + 震幅放大
-          target_df["Volume"] = (1200 + range_p * 180 + np.random.randint(50, 300, size=len(target_df)))
+          target_df["Volume"] = (
+              1200 + range_p * 180 + np.random.randint(50, 300, size=len(target_df))
+          )
 
         return target_df
 
@@ -182,7 +181,6 @@ if check_password():
     S1 = N - 300
     S2 = N - 600
 
-    # 陽線 (紅) / 陰線 (亮水藍)
     plot_df["VolColor"] = [
         "#FF3333" if c >= o else "#00EEEE"
         for o, c in zip(plot_df["Open"], plot_df["Close"])
@@ -214,7 +212,7 @@ if check_password():
         col=1,
     )
 
-    # 📊 2. 成交量圖 (扎實高樓柱體，底座貼齊 0)
+    # 📊 2. 成交量圖
     fig.add_trace(
         io_plotly.Bar(
             x=plot_df.index.strftime("%H:%M"),
@@ -272,10 +270,14 @@ if check_password():
         margin=dict(l=10, r=130, t=60, b=20),
         hovermode="x unified",
         showlegend=False,
-        xaxis=dict(fixedrange=True, type="category"),
-        xaxis2=dict(fixedrange=True, type="category"),
+        # ✨ 關鍵：徹底隱藏 K棒底部與最左側的rangeslider選擇器
+        xaxis=dict(
+            fixedrange=True, type="category", rangeslider=dict(visible=False)
+        ),
+        xaxis2=dict(
+            fixedrange=True, type="category", rangeslider=dict(visible=False)
+        ),
         yaxis=dict(fixedrange=True, side="right", tickformat=",.0f"),
-        # ✨ 強制成交量 Y 軸刻度顯示 1,000 / 2,000 / 3,000 格式
         yaxis2=dict(
             fixedrange=True,
             side="right",
