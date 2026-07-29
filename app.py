@@ -8,13 +8,12 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 # ----------------------------------------------------
-# 🔄 0. 極速自動定時刷新 (盤中 10 秒自動同步最新 K 棒)
+# 🔄 0. 極速自動定時刷新 (10 秒自動同步)
 # ----------------------------------------------------
 st.set_page_config(
-    page_title="台指期 5分K 多空關卡分析", page_icon="📊", layout="wide"
+    page_title="台指期 多空關卡分析", page_icon="📊", layout="wide"
 )
 
-# 10 秒自動刷新網頁，確保夜盤/日盤即時同步
 components.html(
     """
     <script>
@@ -42,7 +41,7 @@ st.markdown(
 )
 
 # ----------------------------------------------------
-# 🔐 1. 密碼驗證 (30天記憶)
+# 🔐 1. 密碼驗證
 # ----------------------------------------------------
 current_time = datetime.now()
 year_month_key = current_time.strftime("%Y_%m")
@@ -76,7 +75,7 @@ def check_password():
     return True
 
   st.title("🔒 系統授權鎖定")
-  st.caption("請輸入每月授權密碼以存取台指期 5分K 關卡圖。")
+  st.caption("請輸入每月授權密碼以存取台指期關卡圖。")
 
   user_pwd = st.text_input("【授權密碼】請輸入當月密碼：", type="password")
 
@@ -93,23 +92,39 @@ def check_password():
 
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：極速即時同步夜盤 5分K
+# 🚀 2. 主程式：週期切換 (5m/15m/1h) + 120 根 K 棒限制
 # ----------------------------------------------------
 if check_password():
-  st.title("📊 台灣台指期 5分K 多空關卡分析圖 (實時同步)")
+  st.title("📊 台灣台指期 多空關卡分析圖")
 
-  # 快取改為 5 秒極速更新
+  # 🎛️ 控制選單：關卡 N 點 + 週期 + 盤別 + 高度
+  col1, col2, col3, col4 = st.columns([1.5, 1.5, 2, 1.5])
+
+  with col2:
+    k_interval = st.selectbox(
+        "【K 棒週期】",
+        options=["5分K", "15分K", "1小時K"],
+        index=0,
+    )
+
+  interval_map = {"5分K": "5m", "15分K": "15m", "1小時K": "1h"}
+  yf_interval = interval_map[k_interval]
+
+  # 快取 5 秒，支援動態週期
   @st.cache_data(ttl=5)
-  def load_5m_futures_realtime():
-    # 優先抓取台指期期貨，若非交易時段備用加權指數
+  def load_futures_realtime(interval_str):
     tickers = ["WTX=F", "^TWII"]
     df = pd.DataFrame()
     used_ticker = ""
 
+    # 1h 週期抓長一點的範圍，分K 抓 7 天
+    fetch_period = "30d" if interval_str == "1h" else "7d"
+
     for t in tickers:
       try:
-        # 取近 7 天資料確保夜盤跨日接續完整
-        temp_df = yf.download(t, period="7d", interval="5m", progress=False)
+        temp_df = yf.download(
+            t, period=fetch_period, interval=interval_str, progress=False
+        )
         if not temp_df.empty:
           df = temp_df
           used_ticker = t
@@ -141,7 +156,6 @@ if check_password():
         "Volume": vol_s,
     }).dropna()
 
-    # 轉台灣時區
     res_df.index = pd.to_datetime(res_df.index)
     if res_df.index.tz is None:
       res_df.index = res_df.index.tz_localize("UTC").tz_convert("Asia/Taipei")
@@ -150,7 +164,6 @@ if check_password():
 
     res_df["time_str"] = res_df.index.strftime("%H:%M")
 
-    # 成交量數據防護
     if res_df["Volume"].sum() < 100:
       range_p = (res_df["High"] - res_df["Low"]).abs()
       res_df["Volume"] = (
@@ -159,30 +172,27 @@ if check_password():
 
     return res_df
 
-  raw_df = load_5m_futures_realtime()
+  raw_df = load_futures_realtime(yf_interval)
 
   if raw_df.empty:
-    st.warning("❌ 暫無 5分K 即時行情資料，請檢查網路或稍後重試。")
+    st.warning("❌ 暫無 K 線行情資料，請稍後重試。")
   else:
-    # 頂部控制面板
-    col1, col2, col3 = st.columns([2, 2, 2])
-
     with col1:
       default_n = float(raw_df["Close"].iloc[-1])
       n_input = st.number_input(
-          "【輸入關卡基準點 N】",
+          "【輸入關卡 N 點】",
           value=int(default_n),
           step=50,
       )
 
-    with col2:
+    with col3:
       session_type = st.selectbox(
           "【交易時段切換】",
-          options=["全日盤 (實時夜盤 15:00~次日13:45)", "僅日盤 (08:45~13:45)"],
+          options=["全日盤 (含夜盤)", "僅日盤 (08:45~13:45)"],
           index=0,
       )
 
-    with col3:
+    with col4:
       chart_height = st.slider(
           "【圖表高度】",
           min_value=400,
@@ -191,21 +201,16 @@ if check_password():
           step=50,
       )
 
-    # 時段過濾邏輯
+    # 1. 盤別過濾
     if "僅日盤" in session_type:
-      day_df = raw_df[
+      filtered_df = raw_df[
           (raw_df["time_str"] >= "08:45") & (raw_df["time_str"] <= "13:45")
       ].copy()
-      if not day_df.empty:
-        latest_date = day_df.index.date[-1]
-        plot_df = day_df[day_df.index.date == latest_date].copy()
-      else:
-        plot_df = raw_df.copy()
-      title_suffix = "【日盤 08:45~13:45】"
     else:
-      # 全日盤：保留最新 200 根 5分K 棒，包含當前即時運作的夜盤
-      plot_df = raw_df.tail(200).copy()
-      title_suffix = "【全日盤 實時夜盤同步中】"
+      filtered_df = raw_df.copy()
+
+    # ✨ 2. 核心限制：永遠只顯示最新 120 根 K 棒
+    plot_df = filtered_df.tail(120).copy()
 
     N = float(n_input)
     P1 = N + 300
@@ -226,15 +231,20 @@ if check_password():
         row_heights=[0.70, 0.30],
     )
 
-    # 🟢🔴 1. 5分K 線圖
+    # X 軸時間顯示格式
+    x_format = (
+        "%m/%d %H:%M" if k_interval != "1小時K" else "%m/%d %H時"
+    )
+
+    # 🟢🔴 1. K 線圖
     fig.add_trace(
         io_plotly.Candlestick(
-            x=plot_df.index.strftime("%m/%d %H:%M"),
+            x=plot_df.index.strftime(x_format),
             open=plot_df["Open"],
             high=plot_df["High"],
             low=plot_df["Low"],
             close=plot_df["Close"],
-            name="5分K",
+            name=k_interval,
             increasing_line_color="#FF3333",
             increasing_fillcolor="#FF3333",
             decreasing_line_color="#00B359",
@@ -247,7 +257,7 @@ if check_password():
     # 📊 2. 成交量圖
     fig.add_trace(
         io_plotly.Bar(
-            x=plot_df.index.strftime("%m/%d %H:%M"),
+            x=plot_df.index.strftime(x_format),
             y=plot_df["Volume"],
             name="成交量",
             marker_color=plot_df["VolColor"],
@@ -265,7 +275,7 @@ if check_password():
         (S2, f"支撐二 {S2:,.0f}", "#FFFF00"),
     ]
 
-    x_last = plot_df.index.strftime("%m/%d %H:%M")[-1]
+    x_last = plot_df.index.strftime(x_format)[-1]
 
     for val, label_text, color in lines_config:
       fig.add_hline(
@@ -294,8 +304,8 @@ if check_password():
         height=chart_height,
         title={
             "text": (
-                f"<b>台指期{title_suffix} (最後同步時間:"
-                f" {last_update_time})</b>"
+                f"<b>台指期【{k_interval} - 最新 120 根 K 棒】關卡圖"
+                f" (同步時間: {last_update_time})</b>"
             ),
             "x": 0.5,
             "xanchor": "center",
