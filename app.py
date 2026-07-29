@@ -9,9 +9,10 @@ import yfinance as yf
 # ----------------------------------------------------
 # 🔄 0. 頁面自動定時刷新 (盤中自動跳動 K 棒)
 # ----------------------------------------------------
-st.set_page_config(page_title="台指期日盤 5分K 關卡分析", page_icon="📊", layout="wide")
+st.set_page_config(
+    page_title="台指期日盤 5分K 關卡分析", page_icon="📊", layout="wide"
+)
 
-# 每 30 秒自動重新載入網頁 (30,000 毫秒)
 components.html(
     """
     <script>
@@ -23,7 +24,6 @@ components.html(
     height=0,
 )
 
-# 注入 CSS 樣式
 st.markdown(
     """
     <head>
@@ -121,18 +121,18 @@ if st.session_state["authenticated"]:
   )
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：5分K 實時關卡對照
+# 🚀 2. 主程式：5分K 實時關卡對照 (修正成交量與文字標籤)
 # ----------------------------------------------------
 if check_password():
   st.title("📊 台灣台指期 【08:45~13:45 日盤 5分K】 關卡圖")
 
   @st.cache_data(ttl=15)
   def load_5m_day_session_data():
-    ticker = "^TWII"
+    ticker = "WTX=F"  # 優先採用台指期近月期貨
     try:
       df = yf.download(ticker, period="5d", interval="5m")
-      if df.empty:
-        ticker = "WTX=F"
+      if df.empty or df["Volume"].sum() == 0:
+        ticker = "^TWII"
         df = yf.download(ticker, period="5d", interval="5m")
 
       if df.empty:
@@ -205,7 +205,7 @@ if check_password():
     S1 = N - 300  # 支撐一 (黃)
     S2 = N - 600  # 支撐二 (黃)
 
-    # 比照第一張圖配色：K棒紅綠，成交量紅 (陽線) / 水藍 (陰線)
+    # 成交量柱體顏色：陽線 (紅) / 陰線 (水藍)
     plot_df["VolColor"] = [
         "#FF3333" if c >= o else "#00EEEE"
         for o, c in zip(plot_df["Open"], plot_df["Close"])
@@ -237,7 +237,7 @@ if check_password():
         col=1,
     )
 
-    # 📊 2. 繪製成交量圖 (比照圖一紅藍配色)
+    # 📊 2. 繪製真實成交量圖 (多空柱狀圖)
     fig.add_trace(
         io_plotly.Bar(
             x=plot_df.index.strftime("%H:%M"),
@@ -251,23 +251,25 @@ if check_password():
     )
 
     # ----------------------------------------------------
-    # 🎯 完全比照第一張圖的線條顏色與格式
+    # 🎯 關卡線與完全不被切割的文字標籤設定
     # ----------------------------------------------------
     lines_config = [
-        (P2, f"壓力二 {P2:,.0f}", "#00EEEE"),  # 水藍色實線/長虛線
-        (P1, f"壓力一 {P1:,.0f}", "#00EEEE"),  # 水藍色實線/長虛線
-        (N, f"多空線 {N:,.0f}", "#FFFFFF"),  # 白色多空線
-        (S1, f"支撐一 {S1:,.0f}", "#FFFF00"),  # 亮黃色線
-        (S2, f"支撐二 {S2:,.0f}", "#FFFF00"),  # 亮黃色線
+        (P2, f"壓力二 {P2:,.0f}", "#00EEEE"),
+        (P1, f"壓力一 {P1:,.0f}", "#00EEEE"),
+        (N, f"多空線 {N:,.0f}", "#FFFFFF"),
+        (S1, f"支撐一 {S1:,.0f}", "#FFFF00"),
+        (S2, f"支撐二 {S2:,.0f}", "#FFFF00"),
     ]
 
     x_last = plot_df.index.strftime("%H:%M")[-1]
 
     for val, label_text, color in lines_config:
+      # 劃出橫向平行的關卡虛線
       fig.add_hline(
           y=val, line_color=color, line_width=2, line_dash="solid", row=1, col=1
       )
-      # 右側文字標籤 (比照第一張圖顯示方式)
+
+      # ✨ 關鍵修復：加上黑底 (bgcolor) 與 垂直微調 (yshift)，文字不被線劃過切割
       fig.add_annotation(
           x=x_last,
           y=val,
@@ -276,13 +278,16 @@ if check_password():
           showarrow=False,
           xanchor="left",
           yanchor="middle",
+          yshift=14,  # 文字稍微向上浮起 14px，遠離線條
+          bgcolor="#000000",  # 加上純黑背景遮擋線條
+          borderpad=2,
           row=1,
           col=1,
       )
 
     trade_date_str = plot_df.index[0].strftime("%Y/%m/%d")
 
-    # 完全比照 MultiCharts 黑色介面
+    # 黑色 MultiCharts 風格版面
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="#000000",
@@ -295,14 +300,20 @@ if check_password():
             "xanchor": "center",
             "font": {"size": 20, "color": "#FFFFFF"},
         },
-        margin=dict(l=10, r=120, t=60, b=20),
+        margin=dict(l=10, r=130, t=60, b=20),
         hovermode="x unified",
         showlegend=False,
         xaxis=dict(fixedrange=True, type="category"),
         xaxis2=dict(fixedrange=True, type="category"),
-        # 強制 Y 軸顯示完整整數金額，去掉 41.5k
+        # K線價格 Y 軸格式化
         yaxis=dict(fixedrange=True, side="right", tickformat=",.0f"),
-        yaxis2=dict(fixedrange=True, side="right"),
+        # ✨ 成交量 Y 軸強制從 0 開始，避免顯示負數與浮點小數
+        yaxis2=dict(
+            fixedrange=True,
+            side="right",
+            rangemode="nonnegative",
+            tickformat=",.0f",
+        ),
     )
 
     fig.update_yaxes(showgrid=True, gridcolor="#222222", row=1, col=1)
