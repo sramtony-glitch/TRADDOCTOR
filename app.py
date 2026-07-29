@@ -92,7 +92,7 @@ def check_password():
 
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：徹底去除白色條狀選擇器
+# 🚀 2. 主程式：去除 X 軸時間標籤
 # ----------------------------------------------------
 if check_password():
   st.title("📊 台灣台指期 【08:45~13:45 日盤 5分K】 關卡圖")
@@ -270,12 +270,18 @@ if check_password():
         margin=dict(l=10, r=130, t=60, b=20),
         hovermode="x unified",
         showlegend=False,
-        # ✨ 關鍵：徹底隱藏 K棒底部與最左側的rangeslider選擇器
+        # ✨ 關鍵修復：隱藏最下方的時間文字標籤 (showticklabels=False)
         xaxis=dict(
-            fixedrange=True, type="category", rangeslider=dict(visible=False)
+            fixedrange=True,
+            type="category",
+            rangeslider=dict(visible=False),
+            showticklabels=False,
         ),
         xaxis2=dict(
-            fixedrange=True, type="category", rangeslider=dict(visible=False)
+            fixedrange=True,
+            type="category",
+            rangeslider=dict(visible=False),
+            showticklabels=False,
         ),
         yaxis=dict(fixedrange=True, side="right", tickformat=",.0f"),
         yaxis2=dict(
