@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 # ----------------------------------------------------
-# 🔄 0. 自動定時刷新
+# 🔄 0. 自動定時刷新 (盤中 30 秒自動更新)
 # ----------------------------------------------------
 st.set_page_config(
     page_title="台指期日盤 5分K 關卡分析", page_icon="📊", layout="wide"
@@ -31,7 +31,7 @@ st.markdown(
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     </head>
     <style>
-    .stNumberInput label { font-size: 18px !important; font-weight: bold !important; color: #FFFFFF !important; }
+    .stNumberInput label, .stSlider label { font-size: 18px !important; font-weight: bold !important; color: #FFFFFF !important; }
     .stNumberInput input { font-size: 18px !important; font-weight: bold !important; }
     h1 { font-size: 26px !important; color: #FFFFFF !important; }
     .js-plotly-plot .plotly .main-svg { touch-action: auto !important; }
@@ -92,7 +92,7 @@ def check_password():
 
 
 # ----------------------------------------------------
-# 🚀 2. 主程式：去除 X 軸時間標籤
+# 🚀 2. 主程式：加入圖表長寬高調整介面
 # ----------------------------------------------------
 if check_password():
   st.title("📊 台灣台指期 【08:45~13:45 日盤 5分K】 關卡圖")
@@ -167,11 +167,21 @@ if check_password():
   else:
     default_n = float(plot_df["Close"].iloc[-1])
 
+    # 🎛️ 第一排選單：關卡 N 點位 + 圖表高度拉桿 (長寬比)
     col1, col2 = st.columns([2, 3])
     with col1:
       n_input = st.number_input(
-          "【輸入關卡基準點 N】 (預設為最新收盤價)",
+          "【輸入關卡基準點 N】",
           value=int(default_n),
+          step=50,
+      )
+
+    with col2:
+      chart_height = st.slider(
+          "【調整圖表顯示高度/長寬比】",
+          min_value=400,
+          max_value=1200,
+          value=650,
           step=50,
       )
 
@@ -259,6 +269,7 @@ if check_password():
         template="plotly_dark",
         paper_bgcolor="#000000",
         plot_bgcolor="#000000",
+        height=chart_height,  # ✨ 使用者可自訂動態高度
         title={
             "text": (
                 f"<b>台指期【{trade_date_str} 日盤 08:45~13:45】 5分K關卡圖</b>"
@@ -270,7 +281,6 @@ if check_password():
         margin=dict(l=10, r=130, t=60, b=20),
         hovermode="x unified",
         showlegend=False,
-        # ✨ 關鍵修復：隱藏最下方的時間文字標籤 (showticklabels=False)
         xaxis=dict(
             fixedrange=True,
             type="category",
